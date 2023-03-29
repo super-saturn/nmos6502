@@ -29,4 +29,10 @@ fn set_byte_at(&mut self, addr:u16, byte: u8);
 ```
 
 
-In more complex systems, eg., an Apple ][ emulator, you may implement whatever clever system you like to intercept/distribute these addresses to various subsystems.
+In more complex systems, eg., an Apple ][ emulator, you may implement whatever clever system you like to intercept/distribute these addresses to various subsystems. You may optionally override
+
+```
+fn get_pipelined_bytes(&mut self, addr:u16) -> (u8, u8, u8)
+```
+
+Which is utilized to retrieve the current opcode and the next two bytes as possible operands. This is only of use if you have a way to actually pipeline these bytes (eg., a system which can send a 24bit+ word in one instruction) or if you need to avoid extraneous memory accesses which might trigger eg., softswitches. The default implementation simply uses `get_byte_at` with a wrapping increment on the address.
