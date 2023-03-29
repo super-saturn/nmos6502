@@ -843,10 +843,35 @@ impl Nmos6502 {
                 self.break_flag_ext_debug = true;
             }, 
             Opcode::NOP => (),
-            Opcode::NOPi0 => { // "Illegal" immediate NOP
-
-            },
-            Opcode::NOPim => {
+            // Begin "illegal" opcodes
+            Opcode::NOPi0 => (),
+            Opcode::NOPim => (),
+            Opcode::NOPim2 => (),
+            Opcode::NOPim3 => (),
+            Opcode::NOPim4 => (),
+            Opcode::NOPim5 => (),
+            Opcode::NOPim6 => (),
+            Opcode::NOPi2 => (),
+            Opcode::NOPi3 => (),
+            Opcode::NOPi4 => (),
+            Opcode::NOPi5 => (),
+            Opcode::NOPz0 => (),
+            Opcode::NOPz1 => (),
+            Opcode::NOPz2 => (),
+            Opcode::NOPzX0 => (),
+            Opcode::NOPzX1 => (),
+            Opcode::NOPzX2 => (),
+            Opcode::NOPzX3 => (),
+            Opcode::NOPzX4 => (),
+            Opcode::NOPzX5 => (),
+            Opcode::NOPabs => (),
+            Opcode::NOPabsX0 => (),
+            Opcode::NOPabsX1 => (),
+            Opcode::NOPabsX2 => (),
+            Opcode::NOPabsX3 => (),
+            Opcode::NOPabsX4 => (),
+            Opcode::NOPabsX5 => (),
+            Opcode::UNREC => { 
                 self.uncaught_opcode_debug = Some(raw_opcode_byte);
             } // "Illegal" implied NOP (here for debug)
         }
