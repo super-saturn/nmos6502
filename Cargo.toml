@@ -3,7 +3,7 @@ name = "nmos6502"
 description = "A no_std compliant NMOS6502 emulator suitable for embedded environments."
 version = "1.0.0"
 edition = "2021"
-license = "LICENSE"
+license = "MIT"
 repository = "https://github.com/super-saturn/nmos6502"
 readme = "README.md"
 
