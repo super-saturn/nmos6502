@@ -15,9 +15,19 @@ Yes! But wait, here's why you may want this one:
 This implementation covers all standard opcodes for the NMOS 6502 and all the "illegal" NOP equivalents. Unrecognized opcodes are exposed for debugging purposes and will be implemented at a later time.
 
 
-## How to Use
+## Quick Start
 
-This library is *only* the CPU. In a 6502 system the CPU is always in charge of the current address of the bus.
+This library is *only* the CPU. In a 6502 system the CPU is always in charge of the current address of the bus. Basic usage is as follows:
+
+```
+let cpu = Nmos6502::new();
+
+loop {
+    // "bus" is any struct
+    // that implements: BusInterface
+    cpu.tick(&mut bus); 
+}
+```
 
 The CPU send and receives data via a `BusInterface`, which the crate user must implement themselves. At its most rudimentary, an implementation could simply allocate a blank 64k array of `u8` and return/write the indexed value.
 
@@ -29,7 +39,13 @@ fn set_byte_at(&mut self, addr:u16, byte: u8);
 ```
 
 
-In more complex systems, eg., an Apple ][ emulator, you may implement whatever clever system you like to intercept/distribute these addresses to various subsystems. You may optionally override
+## Further Details
+
+The 6502 will use the default RESET vector of `0xFFFC-0xFFFD`. That is, whatever value the `BusInterface` returns for that address will be where the cpu sets its Program Counter.
+
+In more complex systems, eg., an Apple ][ emulator, you may implement whatever clever system you like to intercept/distribute any request via `BusInterface` to various subsystems.
+
+For efficiency/speed, you may optionally override
 
 ```
 fn get_pipelined_bytes(&mut self, addr:u16) -> (u8, u8, u8)
