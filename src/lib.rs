@@ -2,4 +2,4 @@
 pub mod nmos6502;
 pub mod bus_interface;
 pub mod opcodes;
-mod processor_status;
+pub mod processor_status;

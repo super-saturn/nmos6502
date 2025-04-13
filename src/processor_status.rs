@@ -1,4 +1,4 @@
-pub(crate) struct ProcessorStatus {
+pub struct ProcessorStatus {
     byte: u8
 }
 

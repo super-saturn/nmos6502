@@ -4,8 +4,8 @@ use crate::bus_interface::BusInterface;
 pub struct Nmos6502 {
     
     current_opcode: Opcode,
-    registers: Registers,
-    processor_status: ProcessorStatus,
+    pub registers: Registers,
+    pub processor_status: ProcessorStatus,
 
     pub last_pc_cycles:u8,
     pub irq: bool,
@@ -16,6 +16,7 @@ pub struct Nmos6502 {
     pub uncaught_opcode_debug: Option<u8>,
     pub last_pc_debug: u16,
     pub num_instructions_executed_debug:u32,
+    pub use_pipelined_bytes: bool
 }
 
 enum InterruptType {
@@ -43,7 +44,8 @@ impl Nmos6502 {
             uncaught_opcode_debug: None,
             last_pc_debug: 0,
             num_instructions_executed_debug: 0,
-            last_pc_cycles: 0
+            last_pc_cycles: 0,
+            use_pipelined_bytes: false
         }
     }
 
@@ -93,9 +95,26 @@ impl Nmos6502 {
             return;
         }
         
-        let (raw_opcode_byte, pipe_byte1, pipe_byte2) = bus.get_pipelined_bytes(self.registers.program_counter);
+        let (raw_opcode_byte, mut pipe_byte1, mut pipe_byte2) = if self.use_pipelined_bytes {
+            bus.get_pipelined_bytes(self.registers.program_counter)
+        } else {
+            (bus.get_byte_at(self.registers.program_counter), 0, 0)
+        };
+        
         let opcode:Opcode = raw_opcode_byte.into();
         self.current_opcode = opcode;
+
+        if !self.use_pipelined_bytes {
+            let byte_count = opcode.pc_inc();
+
+            if byte_count > 2 {
+                pipe_byte2 = bus.get_byte_at(self.registers.program_counter.wrapping_add(2));
+            }
+            
+            if byte_count > 1 {
+                pipe_byte1 = bus.get_byte_at(self.registers.program_counter.wrapping_add(1));
+            }
+        }
 
         self.num_instructions_executed_debug = self.num_instructions_executed_debug.wrapping_add(1);
         self.last_pc_cycles = opcode.cycle_inc();
@@ -880,16 +899,16 @@ impl Nmos6502 {
 
 
     fn indirect_x_addr<T:BusInterface>(&mut self, bus:&mut T, byte:u8, x:u8) -> u16 {
-        let zp_addr = self.zero_page_addr(byte,x);
-        u16::from_le_bytes([bus.get_byte_at(zp_addr),bus.get_byte_at(zp_addr.wrapping_add(1))])
+        let zp_addr_lo = self.zero_page_addr(byte,x);
+        let zp_addr_hi = self.zero_page_addr(byte, x.wrapping_add(1));
+        u16::from_le_bytes([bus.get_byte_at(zp_addr_lo),bus.get_byte_at(zp_addr_hi)])
     }
 
     fn indirect_y_addr<T:BusInterface>(&mut self, bus:&mut T, byte:u8, y:u8) -> u16 {
-        let zp_addr = self.zero_page_addr(byte,0);
-        if (zp_addr as u8).overflowing_add(y).1 {
-            self.last_pc_cycles += 1
-        }
-        let addr = self.abs_addr(bus.get_byte_at(zp_addr),bus.get_byte_at(zp_addr.wrapping_add(1)), 0);
+        let zp_addr_lo = self.zero_page_addr(byte,0);
+        let zp_addr_hi = self.zero_page_addr(byte, 1);
+        
+        let addr = self.abs_addr(bus.get_byte_at(zp_addr_lo),bus.get_byte_at(zp_addr_hi), 0);
         addr.wrapping_add(y as u16)
     }
 
@@ -909,62 +928,77 @@ impl Nmos6502 {
     }
 
     fn add_with_carry(&mut self, byte:u8) {
-        let c = match self.processor_status.carry() {
+        let carry_in = match self.processor_status.carry() {
             false => 0,
             true => 1
         };
 
-        let mut uresult = self.registers.accumulator.wrapping_add(byte); 
+        let mut sum = self.registers.accumulator as u16;
+
+        sum = sum + byte as u16;
+        sum = sum + carry_in as u16;
+
+        if sum & 0xFF == 0 {
+            self.processor_status.set_zero();
+        } else {
+            self.processor_status.clr_zero();
+        }
 
         if !self.processor_status.decimal() {
-            // set carry based on unsigned math
-            if (self.registers.accumulator > uresult) || (byte > uresult) {
-                self.processor_status.set_carry();
-            } else {
-                if uresult == 0xFF && c == 1 { // stupid edge case
-                    self.processor_status.set_carry();
-                } else {
-                    self.processor_status.clr_carry();
-                }
-            }
-
-            uresult = uresult.wrapping_add(c);
-        } else {
-            let a_lo = self.registers.accumulator & 0xF;
-            let a_hi = self.registers.accumulator >> 4;
-            let op_lo = byte & 0xF;
-            let op_hi = byte >> 4;
-
-            let lo_result = a_lo + op_lo + c;
-            let c = if lo_result > 9 { 1 } else { 0 };
-            let hi_result = a_hi + op_hi + c;
-            
-            if hi_result > 9 {
+            if sum > 0xff {
                 self.processor_status.set_carry();
             } else {
                 self.processor_status.clr_carry();
             }
 
-            uresult = (lo_result%10) | ((hi_result%10) << 4);
-        }
+            if sum & 0b1000_0000 > 0 {
+                self.processor_status.set_negative();
+            } else {
+                self.processor_status.clr_negative();
+            }
 
-        self.processor_status.clr_overflow();
-
-        // if 7 bit of acc and pipe are the same,
-        // they are either both neg or both pos
-        // so therefore some risk of overflow
-        if (self.registers.accumulator & 0b1000_0000) == (byte & 0b1000_0000) {
-            // if the sign bit of the result does not match,
-            // we overflowed.
-            if (uresult & 0b1000_0000) != (byte & 0b1000_0000) {
+            if !(self.registers.accumulator ^ byte) & (self.registers.accumulator ^ sum as u8) & 0x80 > 0 {
                 self.processor_status.set_overflow();
+            } else {
+                self.processor_status.clr_overflow();
+            }
+
+        } else {
+            let a = self.registers.accumulator as u16;
+            sum = (a & 0x0f) + (byte as u16 & 0x0f) + carry_in;
+
+            if sum > 0x09 { sum += 0x06 }
+
+            let c = if sum > 0x0f { 1 } else { 0 };
+
+            sum = (a & 0xf0) + (byte as u16 & 0xf0) + (c << 4) + (sum & 0x0f);
+
+            if sum & 0b1000_0000 > 0 { 
+                self.processor_status.set_negative();
+            } else {
+                self.processor_status.clr_negative();
+            }
+
+            if !(self.registers.accumulator ^ byte) & (self.registers.accumulator ^ sum as u8) & 0x80 > 0 {
+                self.processor_status.set_overflow();
+            } else {
+                self.processor_status.clr_overflow();
+            }
+
+            if sum > 0x9f {
+                sum += 0x60;
+            }
+
+            if sum > 0xff {
+                self.processor_status.set_carry();
+            } else {
+                self.processor_status.clr_carry();
             }
         }
 
-        // finally we can just set the result as the unsigned version
-        self.registers.accumulator = uresult;
+        let a = sum as u8;
+        self.registers.accumulator = a;
 
-        self.processor_status.update_zero_neg_flags(self.registers.accumulator);
     }
 
     fn subtract_with_carry(&mut self, byte:u8) {
@@ -975,46 +1009,49 @@ impl Nmos6502 {
         }
         
         // decimal sbc
-        let mut c = match self.processor_status.carry() {
-            false => 1,
-            true => 0
+        let c = match self.processor_status.carry() {
+            false => 0,
+            true => 1
         };
 
-        let a_lo = self.registers.accumulator & 0xF;
-        let a_hi = self.registers.accumulator >> 4;
-        let op_lo = byte & 0xF;
-        let op_hi = byte >> 4;
+        let inv_byte = !byte as i16;
+        let a = self.registers.accumulator as i16;
+        let mut sum = a + inv_byte + c;
 
-        let mut lo_result = a_lo.wrapping_sub(op_lo + c);
-        if lo_result > 10 {
-            // wrapped under
-            c = 1;
-            lo_result = lo_result.wrapping_add(10);
+        if sum & 0xFF == 0 {
+            self.processor_status.set_zero();
         } else {
-            c = 0;
+            self.processor_status.clr_zero();
         }
 
-        let mut hi_result = a_hi.wrapping_sub(op_hi + c);
-        if hi_result > 10 {
-            self.processor_status.clr_carry();
-            hi_result = hi_result.wrapping_add(10);
+        sum = (a & 0x0f) + (inv_byte & 0x0f) + c;
+        if sum <= 0x0f { sum -= 0x06; }
+
+        let c = if sum > 0x0f { 1 } else { 0 };
+
+        sum = (a & 0xf0) + (inv_byte & 0xf0) + (c << 4) + (sum & 0x0f);
+
+        if sum & 0b1000_0000 > 0 {
+            self.processor_status.set_negative();
         } else {
+            self.processor_status.clr_negative();
+        }
+
+        if !(a ^ inv_byte) & (a ^ sum) & 0x80 > 0 {
+            self.processor_status.set_overflow();
+        } else {
+            self.processor_status.clr_overflow();
+        }
+
+        if sum <= 0xff { sum -= 0x60; }
+
+        if sum > 0xff {
             self.processor_status.set_carry();
+        } else {
+            self.processor_status.clr_carry();
         }
 
-        let uresult = lo_result | hi_result.checked_shl(4).unwrap();
-
-        self.processor_status.clr_overflow();
-        if (self.registers.accumulator & 0b1000_0000) == (byte & 0b1000_0000) {
-            // if the sign bit of the result does not match,
-            // we overflowed.
-            if (uresult & 0b1000_0000) != (byte & 0b1000_0000) {
-                self.processor_status.set_overflow();
-            }
-        }
-
-        self.processor_status.update_zero_neg_flags(uresult);
-        self.registers.accumulator = uresult;
+        self.registers.accumulator = sum as u8;
     }
 
     fn branch_by_offset(&mut self, byte:u8) {
@@ -1148,10 +1185,11 @@ impl Nmos6502 {
 }
 
 
-pub(crate) struct Registers {
-    program_counter: u16,
-    accumulator: u8,
-    x: u8,
-    y: u8,
-    stack_pointer: u8
+#[derive(Debug)]
+pub struct Registers {
+    pub program_counter: u16,
+    pub accumulator: u8,
+    pub x: u8,
+    pub y: u8,
+    pub stack_pointer: u8
 }
