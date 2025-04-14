@@ -314,16 +314,20 @@ impl Nmos6502 {
                 self.registers.program_counter = self.abs_addr(pipe_byte1,pipe_byte2, 0);
             },
             Opcode::JMPi => {
-                let indirect_jmp_addr =self.abs_addr(pipe_byte1, pipe_byte2, 0);
-                let lo = bus.get_byte_at(indirect_jmp_addr);
-                let hi = bus.get_byte_at(indirect_jmp_addr.wrapping_add(1));
+                let indirect_jmp_addr_lo =self.abs_addr(pipe_byte1, pipe_byte2, 0);
+                let indirect_jmp_addr_hi =self.abs_addr(pipe_byte1.wrapping_add(1), pipe_byte2, 0);
+                let lo = bus.get_byte_at(indirect_jmp_addr_lo);
+                let hi = bus.get_byte_at(indirect_jmp_addr_hi);
                 self.registers.program_counter = self.abs_addr(lo,hi, 0);
             },
             Opcode::JSR => {
-                let jmp_addr = self.abs_addr(pipe_byte1, pipe_byte2, 0);
+                let jmp_addr_lo = pipe_byte1;
                 let pc_rtn_addr_bytes = self.registers.program_counter.wrapping_sub(1).to_le_bytes();
                 self.push_stack(bus, pc_rtn_addr_bytes[1]);
                 self.push_stack(bus, pc_rtn_addr_bytes[0]);
+                let jmp_addr_hi = bus.get_byte_at(self.registers.program_counter.wrapping_sub(1));
+
+                let jmp_addr = self.abs_addr(jmp_addr_lo, jmp_addr_hi, 0);
                 self.registers.program_counter = jmp_addr;
             },
             Opcode::LDAimm => { // immediate
