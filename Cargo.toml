@@ -1,7 +1,7 @@
 [package]
 name = "nmos6502"
 description = "A no_std compliant NMOS6502 emulator suitable for embedded environments."
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/super-saturn/nmos6502"
